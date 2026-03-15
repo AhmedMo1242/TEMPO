@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.pyo
+*.pyd
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Deep learning / model artifacts
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+checkpoints/
+runs/
+outputs/
+wandb/
+lightning_logs/
+mlruns/
+
+# Data
+data/
+*.csv
+*.json
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.lmdb
+*.mdb
+
+# Logs
+*.log
+logs/
+tb_logs/
+tensorboard/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Distribution / packaging
+*.tar.gz
+*.zip
+
+# Misc
+.cache/
+tmp/
+temp/

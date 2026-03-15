@@ -1,0 +1,82 @@
+work_dir: ./work_dir/transformer_backend/
+
+phase: train
+device: "0,1"
+save_interval: 1
+random_seed: 42
+eval_interval: 1
+log_interval: 50
+evaluate_tool: python
+load_checkpoints: /path/to/transformer_checkpoint.pt
+
+# ─ Data ───────────────────────────────────────────────────────────────────────
+feeder: SkeletonFeeder
+dataset: mslr_si
+dataset_part: all
+num_worker: 4
+
+feeder_args:
+  setting: si
+  datatype: skeleton
+  split: &split [25, 46, 67, 86]
+  norm_point: [0, 25, 46, 67]
+  used_part: &used_part ["body", "hand21", "mouth_8"]
+  skeleton_pkl: /path/to/pose_data_isharah2000_hands_lips_body_phase2_SI.pkl
+
+train_args:
+  clip_grad: 5.0
+  max_batches: ~
+
+# ─ Model ──────────────────────────────────────────────────────────────────────
+model: TwoStream_Cosign
+model_args:
+  visual_args:
+    in_channels: 2
+    split: *split
+    temporal_kernel: 3
+    hidden_size: 512
+    modes: *used_part
+    level: "1"
+    adaptive: True
+    CR_args:
+      clip_length: 25
+      ratio: 0.2
+
+  conv_type: K3-P2-K3-P2
+  num_layers: 2
+
+  use_tape: False
+  use_mstcn: False
+  use_hybrid_backend: True
+
+  hybrid_args:
+    num_transformer_layers: 2
+    num_heads: 8
+    dropout: 0.2
+
+  loss_weights:
+    CR_ConvCTC_fusion: 1.0
+    CR_SeqCTC_fusion: 1.0
+    CR_GatedCTC_fusion: 0.8
+    CR_Conv_fusion: 1.0
+    CR_Seq_fusion: 1.0
+
+  norm_scale: 64
+
+# ─ Optimiser ──────────────────────────────────────────────────────────────────
+batch_size: 8
+test_batch_size: 8
+
+optimizer_args:
+  base_lr: 0.0002
+  learning_ratio: 1
+  nesterov: false
+  optimizer: AdamW
+  start_epoch: 0
+  scheduler: cosine
+  label_smoothing: 0.1
+  weight_decay: 0.0005
+  num_epoch: 45
+  warmup_epochs: 1
+
+num_epoch: 45

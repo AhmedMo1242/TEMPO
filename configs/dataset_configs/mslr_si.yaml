@@ -1,0 +1,3 @@
+dataset_root: ./datasets/mslr2026/
+dict_path: ./datasets/mslr2026/si_gloss_dict.json
+ref_csv: ./datasets/mslr2026/si_dev.csv
