@@ -1,4 +1,4 @@
-# Cosign-TempDP-CSLR
+# TEMPO
 
 1st Place Solution for MSLR 2026 Track 1
 
