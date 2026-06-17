@@ -127,6 +127,10 @@ class TwoStream_Cosign(nn.Module):
             setattr(self, f"contextual_module_{name}", contextual_module)
             setattr(self, f"classifier_{name}", classifier)
 
+            # Final LayerNorm (checkpoint-compatible: saved in trained weights)
+            final_norm = nn.LayerNorm(hidden_size)
+            setattr(self, f"final_norm_{name}", final_norm)
+
         # CSC: Cross-Stream Consistency
         if self.use_csc:
             self.csc_module = CrossStreamConsistencyLoss(temperature=0.1)
@@ -156,6 +160,7 @@ class TwoStream_Cosign(nn.Module):
         classifier,
         tape_module=None,
         ssd_module=None,
+        final_norm=None,
     ):
         # TAPE Adapter
         if tape_module is not None:
@@ -192,8 +197,12 @@ class TwoStream_Cosign(nn.Module):
         contextual_feat = contextual_feat.transpose(0, 1)  # B, T, C
 
         # Layer norm before classifier for numerical stability
-        contextual_feat = F.layer_norm(contextual_feat, contextual_feat.shape[-1:])
-        conv1d_feat = F.layer_norm(conv1d_feat, conv1d_feat.shape[-1:])
+        if final_norm is not None:
+            contextual_feat = final_norm(contextual_feat)
+            conv1d_feat = final_norm(conv1d_feat)
+        else:
+            contextual_feat = F.layer_norm(contextual_feat, contextual_feat.shape[-1:])
+            conv1d_feat = F.layer_norm(conv1d_feat, conv1d_feat.shape[-1:])
 
         # Classification: conv head (Y_c) and seq head (Y_s)
         conv1d_logits = classifier(conv1d_feat.transpose(0, 1))
@@ -235,6 +244,7 @@ class TwoStream_Cosign(nn.Module):
                     getattr(self, f"tape_{stream_type}") if self.use_tape else None
                 )
                 ssd_module = self.ssd_module if self.use_ssd else None
+                final_norm = getattr(self, f"final_norm_{stream_type}")
 
                 for view_name, view_feat in [("view1", view1), ("view2", view2)]:
                     ret = self.forward_contextual(
@@ -245,6 +255,7 @@ class TwoStream_Cosign(nn.Module):
                         classifier,
                         tape_module,
                         ssd_module=ssd_module,
+                        final_norm=final_norm,
                     )
                     results[f"{view_name}_{stream_type}_conv_logits"] = ret[
                         "conv_logits"
@@ -269,6 +280,7 @@ class TwoStream_Cosign(nn.Module):
                 self.contextual_module_fusion,
                 self.classifier_fusion,
                 self.tape_fusion if self.use_tape else None,
+                final_norm=self.final_norm_fusion,
             )
             return {
                 "conv_logits": ret["conv_logits"],

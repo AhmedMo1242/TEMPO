@@ -1,0 +1,81 @@
+work_dir: ./work_dir/test_run/
+phase: test
+device: "0"
+save_interval: 1
+random_seed: 42
+eval_interval: 1
+log_interval: 50
+evaluate_tool: python
+test_trigger: 45.0
+
+feeder: SkeletonFeeder
+dataset: mslr_si
+dataset_part: all
+num_worker: 0
+
+feeder_args:
+  setting: si
+  datatype: skeleton
+  split: [25, 46, 67, 86]
+  norm_point: [0, 25, 46, 67]
+  used_part: ["body", "hand21", "mouth_8"]
+  skeleton_pkl: /kaggle/input/mslr-task1/pose_data_isharah2000_hands_lips_body_phase2_SI.pkl
+
+train_args:
+  clip_grad: 5.0
+  max_batches: ~
+
+model: TwoStream_Cosign
+model_args:
+  visual_args:
+    in_channels: 2
+    split: [25, 46, 67, 86]
+    temporal_kernel: 3
+    hidden_size: 512
+    modes: ["body", "hand21", "mouth_8"]
+    level: "1"
+    adaptive: true
+    CR_args:
+      clip_length: 25
+      ratio: 0.2
+
+  conv_type: K3-P2-K3-P2
+  num_layers: 2
+
+  use_tape: false
+  use_mstcn: false
+  use_hybrid_backend: false
+
+  loss_weights:
+    CR_ConvCTC_fusion: 1.0
+    CR_ConvCTC_motion: 1.0
+    CR_ConvCTC_static: 1.0
+    CR_Conv_fusion: 2.0
+    CR_Conv_motion: 2.0
+    CR_Conv_static: 2.0
+    CR_SeqCTC_fusion: 1.0
+    CR_SeqCTC_motion: 1.0
+    CR_SeqCTC_static: 1.0
+    CR_Seq_fusion: 2.0
+    CR_Seq_motion: 2.0
+    CR_Seq_static: 2.0
+
+  norm_scale: 32
+
+batch_size: 4
+test_batch_size: 4
+
+optimizer_args:
+  base_lr: 0.0001
+  label_smoothing: 0.1
+  learning_ratio: 1
+  nesterov: false
+  optimizer: AdamW
+  scheduler: cosine
+  start_epoch: 0
+  warmup_epochs: 0
+  weight_decay: 0.0005
+  num_epoch: 1
+
+load_checkpoints: null
+load_weights: null

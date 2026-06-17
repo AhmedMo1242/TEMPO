@@ -64,6 +64,57 @@ python postprocess.py \
     --alpha  0.5
 ```
 
+### 4. Gloss Boundary Extraction
+
+Extract start/end frame for each predicted gloss from CTC logits.
+
+```bash
+# single sample
+python extract.py 02_0001
+
+# multiple samples
+python extract.py 02_0001 02_0002 02_0003
+
+# first N samples from dataset
+python extract.py --all --limit 10
+
+# JSON output
+python extract.py 02_0001 --json
+
+# CSV output
+python extract.py 02_0001 02_0002 --csv
+```
+
+**Library usage:**
+
+```python
+from extract import BoundaryExtractor
+
+ext = BoundaryExtractor()                          # loads model once
+result = ext("02_0001")                            # → dict with segments
+# {"sample_id": "02_0001", "t_orig": 32, "feat_len": 11,
+#  "segments": [{"gloss": "سوال", "label_id": 585,
+#                "start": 0, "end": 13,             # original frames
+#                "start_feat": 0, "end_feat": 5}]   # feature frames
+# }
+
+results = ext.batch(["02_0001", "02_0002"])        # → list of dicts
+
+# build real gloss names from CSV predictions
+gloss_map = ext.build_gloss_map_from_csv()
+result = ext("02_0001", gloss_map=gloss_map)
+```
+
+**Output columns:**
+
+| Field | Description |
+|:---|:---|
+| `gloss` | Predicted gloss name (Arabic) |
+| `label_id` | Class index (1–1113) |
+| `start` / `end` | Start/end frame in original video (inclusive) |
+| `start_feat` / `end_feat` | Start/end frame in model feature space |
+
+Config lives at `configs/test.yaml`. Edit `load_checkpoints` to point to your checkpoint.
 
 ---
 
