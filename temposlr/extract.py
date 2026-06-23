@@ -2,78 +2,107 @@
 """
 Gloss boundary extraction from TEMPO skeleton inference.
 
+Supports train/dev/test splits.
+
 CLI:
-    python extract.py 02_0001                    # one sample
-    python extract.py 02_0001 02_0002 02_0003    # multiple
-    python extract.py --all --limit 10            # first 10 from dataset
-    python extract.py 02_0001 --json             # JSON output
-    python extract.py 02_0001 --csv              # CSV output
+    python -m temposlr.extract 02_0001                          # one sample (dev)
+    python -m temposlr.extract 02_0001 02_0002 02_0003          # multiple
+    python -m temposlr.extract --all --limit 10                  # first 10
+    python -m temposlr.extract --split train --all --limit 10    # train split
+    python -m temposlr.extract --split test --all --limit 10     # test split
+    python -m temposlr.extract 02_0001 --json                    # JSON output
+    python -m temposlr.extract 02_0001 --csv                     # CSV output
 
 Library:
-    from extract import BoundaryExtractor
-    ext = BoundaryExtractor()
+    from temposlr.extract import BoundaryExtractor
+    ext = BoundaryExtractor(split="dev")
     segments = ext("02_0001")
-    # [{"gloss": "هو", "label_id": 1071, "start": 0, "end": 5, "start_feat": 2, "end_feat": 3}, ...]
 """
-import os, sys, json, yaml, csv, argparse
+import os, sys, json, yaml, argparse, csv
 import numpy as np
 import torch
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Resolve paths relative to package root (TEMPO/)
+_PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class BoundaryExtractor:
     """Extract gloss boundaries from TEMPO model inference.
 
+    Supports train/dev/test splits via the `split` parameter.
+
     Usage:
-        ext = BoundaryExtractor(config="configs/test.yaml")
+        ext = BoundaryExtractor(config="configs/test.yaml", split="dev")
         segments = ext("02_0001")
     """
+
+    # Split → video ID prefix mapping
+    SPLIT_PREFIXES = {
+        "train": "00",
+        "dev": "02",
+        "test": "08",
+    }
 
     def __init__(
         self,
         config: str = "configs/test.yaml",
-        gloss_dict_path: str = "./datasets/mslr2026/si_gloss_dict.json",
+        gloss_dict_path: str = None,
         device: str = None,
+        split: str = None,
     ):
         """Load model and build dataset feeder.
 
         Args:
-            config: path to configs/test.yaml
-            gloss_dict_path: path to gloss dict JSON
+            config: path to config YAML
+            gloss_dict_path: path to gloss dict JSON (default: auto-detect)
             device: "cuda" or "cpu" (auto-detected if None)
+            split: "train", "dev", or "test" (overrides config if set)
         """
-        from datasets.skeleton_feeder import SkeletonFeeder
-        import slr_network
+        from temposlr.datasets.skeleton_feeder import SkeletonFeeder
+        from temposlr import model as slr_network
+
+        if gloss_dict_path is None:
+            gloss_dict_path = os.path.join(
+                _PKG_ROOT, "temposlr", "datasets", "mslr2026", "si_gloss_dict.json"
+            )
 
         with open(config) as f:
             self.cfg = yaml.safe_load(f)
         with open(gloss_dict_path) as f:
             self.gloss_dict = json.load(f)
 
+        # Determine split
+        self.split = split or self.cfg.get("feeder_args", {}).get("setting", "dev")
+        if self.split not in self.SPLIT_PREFIXES:
+            print(f"[WARN] Unknown split '{self.split}', falling back to 'dev'")
+            self.split = "dev"
+
         # Dummy id→name fallback
-        self.dummy_map = {int(k): v["gloss"] for k, v in self.gloss_dict["id2gloss"].items()}
+        self.dummy_map = {
+            int(k): v["gloss"] for k, v in self.gloss_dict["id2gloss"].items()
+        }
 
         # Model
         self.model = slr_network.TwoStream_Cosign(
             **self.cfg["model_args"], gloss_dict=self.gloss_dict
         )
         ckpt = torch.load(self.cfg["load_checkpoints"], map_location="cpu")
-        sd = {
-            k[7:] if k.startswith("module.") else k: v
-            for k, v in ckpt["model_state_dict"].items()
-        }
-        self.model.load_state_dict(sd, strict=True)
+        sd = {}
+        for k, v in ckpt["model_state_dict"].items():
+            k = k[7:] if k.startswith("module.") else k
+            sd[k] = v
+        self.model.load_state_dict(sd, strict=False)
         self.device = torch.device(
             device if device else ("cuda" if torch.cuda.is_available() else "cpu")
         )
         self.model = self.model.to(self.device).eval()
         self.norm_scale = self.cfg["model_args"]["norm_scale"]
 
-        # Feeder
+        # Feeder — use split mode
+        feeder_mode = self.split
         self.feeder = SkeletonFeeder(
             gloss_dict=self.gloss_dict,
-            mode="test",
+            mode=feeder_mode,
             setting="si",
             transform_mode=False,
             datatype="skeleton",
@@ -85,6 +114,7 @@ class BoundaryExtractor:
         self.id_to_idx = {
             item["video_id"]: i for i, item in enumerate(self.feeder.inputs_list)
         }
+        print(f"[BoundaryExtractor] split={self.split}  samples={len(self.id_to_idx)}")
 
     def _collate(self, input_tensor: torch.Tensor):
         """Left/right pad a single sample and move to device."""
@@ -101,32 +131,17 @@ class BoundaryExtractor:
         bl = torch.LongTensor([int(np.ceil(T_orig / 4.0) * 4 + 12)]).to(self.device)
         return bx, bl, T_orig
 
-    def __call__(
-        self,
-        sample_id: str,
-        gloss_map: dict = None,
-    ) -> dict:
+    def __call__(self, sample_id: str) -> dict:
         """Extract boundaries for one sample.
 
         Args:
             sample_id: e.g. "02_0001"
-            gloss_map: optional {label_id: "arabic_gloss"} mapping
 
         Returns:
-            {
-                "sample_id": str,
-                "t_orig": int,
-                "feat_len": int,
-                "segments": [
-                    {"gloss": str, "label_id": int,
-                     "start": int, "end": int,        # original frames (inclusive)
-                     "start_feat": int, "end_feat": int  # feature frames
-                    }, ...
-                ]
-            }
+            dict with sample_id, t_orig, feat_len, segments
         """
         if sample_id not in self.id_to_idx:
-            raise KeyError(f"Sample '{sample_id}' not found in dataset")
+            raise KeyError(f"Sample '{sample_id}' not found in {self.split} split")
 
         idx = self.id_to_idx[sample_id]
         input_tensor, _, _ = self.feeder[idx]
@@ -138,20 +153,14 @@ class BoundaryExtractor:
         logits = ret["seq_logits"][0].cpu()
         feat_len = ret["feat_len"][0].item()
 
-        from utils.boundary_extraction import extract_boundaries, feat_to_orig
+        from temposlr.utils.boundary_extraction import extract_boundaries, feat_to_orig
 
         raw_segments = extract_boundaries(logits, feat_len, norm_scale=self.norm_scale)
 
         segments = []
         for lid, sf, ef in raw_segments:
             so, eo = feat_to_orig(sf, ef, T_orig)
-            gloss = None
-            if gloss_map and lid in gloss_map:
-                gloss = gloss_map[lid]
-            elif lid in self.dummy_map:
-                gloss = self.dummy_map[lid]
-            else:
-                gloss = f"id_{lid}"
+            gloss = self.dummy_map.get(lid, f"id_{lid}")
             segments.append({
                 "gloss": gloss,
                 "label_id": lid,
@@ -168,58 +177,18 @@ class BoundaryExtractor:
             "segments": segments,
         }
 
-    def batch(
-        self,
-        sample_ids: list,
-        gloss_map: dict = None,
-    ) -> list:
-        """Extract boundaries for multiple samples.
+    def batch(self, sample_ids: list) -> list:
+        """Extract boundaries for multiple samples."""
+        return [self(sid) for sid in sample_ids]
 
-        Args:
-            sample_ids: list of sample IDs
-            gloss_map: optional {label_id: "arabic_gloss"} mapping
-
-        Returns:
-            list of result dicts (one per sample)
-        """
-        return [self(sid, gloss_map=gloss_map) for sid in sample_ids]
-
-    def build_gloss_map_from_csv(
-        self,
-        csv_path: str = "/kaggle/input/mslr-track-2-5/best_dev_seq.csv",
-        max_samples: int = 50,
-    ) -> dict:
-        """Build real {label_id: gloss_name} mapping from CSV predictions.
-
-        Matches model-decoded label_ids to CSV tokens 1:1.
-        """
-        from utils.boundary_extraction import extract_boundaries
-
-        csv_preds = {}
-        with open(csv_path) as f:
-            for row in csv.DictReader(f):
-                csv_preds[row["id"]] = row["gloss"]
-
-        id2gloss = {}
-        count = 0
-        for sample_id, pred_text in csv_preds.items():
-            if sample_id not in self.id_to_idx:
-                continue
-            result = self(sample_id)
-            decoded_ids = [s["label_id"] for s in result["segments"]]
-            csv_tokens = pred_text.split()
-
-            if len(decoded_ids) == len(csv_tokens):
-                for lid, token in zip(decoded_ids, csv_tokens):
-                    if lid not in id2gloss:
-                        id2gloss[lid] = token
-                count += 1
-                if count >= max_samples:
-                    break
-        return id2gloss
+    def all_sample_ids(self) -> list:
+        """Return all sample IDs for the current split, sorted."""
+        ids = list(self.id_to_idx.keys())
+        ids.sort()
+        return ids
 
 
-def _print_table(result: dict, gloss_map: dict = None):
+def _print_table(result: dict):
     """Pretty-print one result dict."""
     sid = result["sample_id"]
     t_orig = result["t_orig"]
@@ -237,11 +206,8 @@ def _print_table(result: dict, gloss_map: dict = None):
     print(f"  {'#':<4} {'Gloss':<25} {'ID':<8} {'Feat':<12} {'Orig':<12} {'Dur':<5}")
     print(f"  {'─' * 70}")
     for i, s in enumerate(segs):
-        g = s["gloss"]
-        if gloss_map and s["label_id"] in gloss_map:
-            g = gloss_map[s["label_id"]]
         print(
-            f"  {i+1:<4} {g:<25} {s['label_id']:<8} "
+            f"  {i+1:<4} {s['gloss']:<25} {s['label_id']:<8} "
             f"[{s['start_feat']:>3},{s['end_feat']:>3})  "
             f"[{s['start']:>3},{s['end']:>3})  "
             f"{s['end'] - s['start'] + 1:>3}"
@@ -253,18 +219,19 @@ def main():
     parser.add_argument("samples", nargs="*", help="Sample IDs (e.g. 02_0001)")
     parser.add_argument("--all", action="store_true", help="Process all samples")
     parser.add_argument("--limit", type=int, default=10, help="Max samples with --all")
+    parser.add_argument("--split", choices=["train", "dev", "test"], default="dev",
+                        help="Dataset split to use (default: dev)")
     parser.add_argument("--json", action="store_true", dest="as_json", help="JSON output")
     parser.add_argument("--csv", action="store_true", dest="as_csv", help="CSV output")
     parser.add_argument("--config", default="configs/test.yaml", help="Config path")
     parser.add_argument("--device", default=None, help="cuda or cpu")
     args = parser.parse_args()
 
-    ext = BoundaryExtractor(config=args.config, device=args.device)
+    ext = BoundaryExtractor(config=args.config, device=args.device, split=args.split)
 
     # Determine sample IDs
     if args.all:
-        all_ids = list(ext.id_to_idx.keys())
-        all_ids.sort()
+        all_ids = ext.all_sample_ids()
         sample_ids = all_ids[: args.limit]
     elif args.samples:
         sample_ids = args.samples
@@ -272,15 +239,7 @@ def main():
         parser.print_help()
         return
 
-    # Build gloss map from CSV if available
-    gloss_map = {}
-    csv_path = "/kaggle/input/mslr-track-2-5/best_dev_seq.csv"
-    if os.path.exists(csv_path):
-        gloss_map = ext.build_gloss_map_from_csv(csv_path)
-        print(f"Loaded {len(gloss_map)} gloss mappings from CSV")
-
-    # Process
-    results = ext.batch(sample_ids, gloss_map=gloss_map)
+    results = ext.batch(sample_ids)
 
     # Output
     if args.as_json:
@@ -296,10 +255,10 @@ def main():
                 ])
     else:
         print(f"\n{'=' * 80}")
-        print(f"GLOSS BOUNDARY EXTRACTION — {len(results)} samples")
+        print(f"GLOSS BOUNDARY EXTRACTION — {len(results)} samples ({args.split} split)")
         print(f"{'=' * 80}")
         for r in results:
-            _print_table(r, gloss_map)
+            _print_table(r)
         print(f"\n{'=' * 80}")
         print(f"Total: {sum(len(r['segments']) for r in results)} glosses across {len(results)} samples")
         print(f"{'=' * 80}")

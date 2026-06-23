@@ -1,17 +1,18 @@
-work_dir: ./work_dir/test_run/
-phase: test
-device: "0"
+work_dir: ./work_dir/train_run/
+phase: train
+device: "0,1"
 save_interval: 1
 random_seed: 42
 eval_interval: 1
+eval_start_epoch: 15
 log_interval: 50
 evaluate_tool: python
-test_trigger: 45.0
+test_trigger: 15.0
 
 feeder: SkeletonFeeder
-dataset: mslr_si
+dataset: mslr_iccv_si
 dataset_part: all
-num_worker: 0
+num_worker: 4
 
 feeder_args:
   setting: si
@@ -45,6 +46,8 @@ model_args:
   use_tape: false
   use_mstcn: false
   use_hybrid_backend: false
+  use_ssd: false
+  use_csc: false
 
   loss_weights:
     CR_ConvCTC_fusion: 1.0
@@ -62,20 +65,23 @@ model_args:
 
   norm_scale: 64
 
-batch_size: 4
-test_batch_size: 4
+batch_size: 8
+test_batch_size: 8
 
 optimizer_args:
-  base_lr: 0.0001
+  base_lr: 0.0002
   label_smoothing: 0.1
   learning_ratio: 1
   nesterov: false
   optimizer: AdamW
   scheduler: cosine
   start_epoch: 0
-  warmup_epochs: 0
+  warmup_epochs: 1
   weight_decay: 0.0005
-  num_epoch: 1
+  num_epoch: 52
 
-load_checkpoints: /kaggle/input/mslr-track-2-5/best_model.pt
+load_checkpoints: null
 load_weights: null
+freeze_layers: []
+ignore_weights: []
+reset_optimizer: false

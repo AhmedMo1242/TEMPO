@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import torch.nn.functional as F
-from evaluation.wer import compute_wer, load_csv_as_dict
+from temposlr.evaluation.wer import compute_wer, load_csv_as_dict
 
 
 def seq_train(

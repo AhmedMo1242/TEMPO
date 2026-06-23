@@ -2,17 +2,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import utils
-from modules import (
+from temposlr import utils
+from temposlr.modules import (
     BiLSTMLayer,
     TemporalConv,
     TAPEAdapter,
     MSTCN_Skeleton,
     HybridBackend,
 )
-from modules.stochastic_depth import StochasticDepth
-from modules.cross_stream_consistency import CrossStreamConsistencyLoss
-from modules.visual_extractor import CoSign2s
+from temposlr.modules.stochastic_depth import StochasticDepth
+from temposlr.modules.cross_stream_consistency import CrossStreamConsistencyLoss
+from temposlr.modules.visual_extractor import CoSign2s
 
 
 class KLdis(nn.Module):
@@ -139,6 +139,24 @@ class TwoStream_Cosign(nn.Module):
         # SSD: Stochastic Sequence Depth
         if self.use_ssd:
             self.ssd_module = StochasticDepth(prob=0.2)
+
+        # Gating layers (trained checkpoint expects these)
+        gating_in = hidden_size * 2  # pooled features for static/motion are 256*4=1024
+        self.gating_static = nn.ModuleDict({
+            'gate': nn.Sequential(
+                nn.Linear(gating_in, 256), nn.ReLU(), nn.Linear(256, 1)
+            )
+        })
+        self.gating_motion = nn.ModuleDict({
+            'gate': nn.Sequential(
+                nn.Linear(gating_in, 256), nn.ReLU(), nn.Linear(256, 1)
+            )
+        })
+        self.gating_fusion = nn.ModuleDict({
+            'gate': nn.Sequential(
+                nn.Linear(gating_in, 256), nn.ReLU(), nn.Linear(256, 1)
+            )
+        })
 
         self.loss = {
             "ctc": nn.CTCLoss(reduction="none", zero_infinity=True),

@@ -35,8 +35,8 @@ wandb/
 lightning_logs/
 mlruns/
 
-# Data
-data/
+# Data (root-level only — temposlr/data/ and datasets/ are tracked)
+# data/
 *.csv
 *.json
 *.pkl
@@ -47,6 +47,10 @@ data/
 *.npz
 *.lmdb
 *.mdb
+
+# Allow package data files
+!temposlr/data/*.csv
+!datasets/**/*.json
 
 # Logs
 *.log

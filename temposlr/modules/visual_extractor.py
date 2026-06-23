@@ -141,11 +141,16 @@ class CoSign2s(nn.Module):
                 )
             )
 
+        # Stability: Input normalization to handle unnormalized skeleton data
+        # Increased eps to 1e-3 to handle zero-variance frames (signer not moving)
+        self.static_input_norm = nn.LayerNorm(in_channels, eps=1e-3)
+        self.motion_input_norm = nn.LayerNorm(4, eps=1e-3)
+
         self.static_linear = nn.Sequential(
-            nn.Linear(in_channels, 64), nn.ReLU(inplace=True)
+            nn.Linear(in_channels, 64), nn.LayerNorm(64), nn.ReLU(inplace=True)
         )
         self.motion_linear = nn.Sequential(
-            nn.Linear(4, 64), nn.ReLU(inplace=True)
+            nn.Linear(4, 64), nn.LayerNorm(64), nn.ReLU(inplace=True)
         )
 
         # Override motion linear if configured differently?
@@ -337,6 +342,10 @@ class CoSign2s(nn.Module):
         # (can happen if input is entirely NaN in the source data)
         static = torch.nan_to_num(static, 0.0)
         motion = torch.nan_to_num(motion, 0.0)
+
+        # Apply input normalization (per joint, per frame)
+        static = self.static_input_norm(static)
+        motion = self.motion_input_norm(motion)
 
         static = self.static_linear(static).permute(0, 3, 1, 2)  # N,C,T,V
         motion = self.motion_linear(motion).permute(0, 3, 1, 2)  # N,C,T,V

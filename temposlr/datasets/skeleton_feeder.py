@@ -12,10 +12,11 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 import numpy as np
 
 import torch.utils.data as data
-from utils import skeleton_augmentation
+from temposlr.utils import skeleton_augmentation
 from itertools import chain
 
-sys.path.append("..")
+# Resolve paths relative to TEMPO root (one level up from this file's package dir)
+_PKG_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class SkeletonFeeder(data.Dataset):
@@ -46,11 +47,11 @@ class SkeletonFeeder(data.Dataset):
         if len(self.mode_list) == 2:
             inputs_list = []
             for mode_type in self.mode_list:
-                info_path = f"./datasets/mslr2026/{self.setting}_{mode_type}_info.json"
+                info_path = os.path.join(_PKG_ROOT, "temposlr", "datasets", "mslr2026", f"{self.setting}_{mode_type}_info.json")
                 with open(info_path, "r") as f:
                     inputs_list.extend(json.load(f))
         else:
-            info_path = f"./datasets/mslr2026/{self.setting}_{self.mode}_info.json"
+            info_path = os.path.join(_PKG_ROOT, "temposlr", "datasets", "mslr2026", f"{self.setting}_{self.mode}_info.json")
             if os.path.exists(info_path):
                 with open(info_path, "r") as f:
                     inputs_list = json.load(f)

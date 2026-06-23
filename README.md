@@ -1,4 +1,4 @@
-# TEMPO
+# TEMPO — Sign Language Recognition
 
 1st Place Solution for MSLR 2026 Track 1
 
@@ -12,15 +12,13 @@
 
 ## Solution Summary
 
-Cosign-TempDP-CSLR is our skeleton-based Continuous Sign Language Recognition (CSLR) system for signer-independent Arabic sign language recognition. It transfers temporal modeling techniques from RGB-based methods to a pure skeleton pipeline. The backbone is a two-stream CoSign-2s Spatial-Temporal GCN that processes static and motion skeleton features in parallel. On top of the GCN we stack three temporal modules transferred from RGB CSLR literature:
+Cosign-TempDP-CSLR is a skeleton-based Continuous Sign Language Recognition (CSLR) system for signer-independent Arabic sign language recognition. The backbone is a two-stream CoSign-2s Spatial-Temporal GCN that processes static and motion skeleton features in parallel. On top of the GCN we stack three temporal modules:
 
 - **TAPE** — a lightweight positional adapter that introduces frame-level temporal context into the skeleton feature stream without heavy computational overhead.
 - **MS-TCN + LiftPool** — a multi-scale temporal convolutional network with a learnable pooling layer for capturing gesture dynamics across multiple timescales.
 - **Hybrid BiLSTM + Transformer** — a sequential backend that combines the local sequential modeling of BiLSTM with the global attention of a Transformer encoder.
 
 Training uses a multi-term CTC loss with cross-stream consistency regularization across static, motion, and fusion branches. At inference, a dynamic-programming post-processing step applies a Levenshtein+Jaccard lexicon correction pass over the raw CTC output to further reduce WER.
-
-The full system (TAPE + MS-TCN + Transformer) achieves **5.68% WER** on the test set, a significant improvement over the CoSign-2s baseline (~18% WER). Two additional regularization modules — Stochastic Sequence Depth (SSD) and Cross-Stream Consistency (CSC) — are explored as ablation variants.
 
 ---
 
@@ -30,82 +28,112 @@ The full system (TAPE + MS-TCN + Transformer) achieves **5.68% WER** on the test
 pip install torch torchvision tqdm pyyaml numpy
 ```
 
-- Python 3.8+, PyTorch ≥ 2.0, CUDA GPU
+- Python 3.8+, PyTorch ≥ 1.9, CUDA GPU
 
 ---
 
-## Running
+## Project Structure
 
-### 1. Preprocess
-
-```bash
-python preprocess_data.py \
-    --pkl_path /path/to/skeleton_data_SI.pkl \
-    --train_csv /path/to/train.csv \
-    --dev_csv /path/to/dev.csv \
-    --output_dir datasets/mslr2026 \
-    --setting si
+```
+TEMPO/
+├── run.py                          # Unified CLI entry point
+├── temposlr/                       # Main package
+│   ├── model.py                    # TwoStream_Cosign model
+│   ├── extract.py                  # BoundaryExtractor (train/dev/test)
+│   ├── runner.py                   # SLRProcessor (training loop)
+│   ├── loops.py                    # seq_train, seq_eval
+│   ├── data/                       # Ground truth CSVs
+│   │   ├── train.csv               # 19500 samples
+│   │   ├── dev.csv                 # 1950 samples
+│   │   └── test.csv                # 7800 samples
+│   ├── datasets/                   # SkeletonFeeder + info JSONs
+│   ├── modules/                    # Visual extractor, STGCN, BiLSTM, etc.
+│   ├── utils/                      # Decode, boundary extraction, etc.
+│   └── evaluation/                 # WER computation
+├── configs/
+│   ├── train.yaml                  # Training config
+│   └── test.yaml                   # Eval/inference config
+└── scripts/
+    └── generate_dataset_files.py   # Dataset generation
 ```
 
-### 2. Train
+---
+
+## Quick Start
+
+### Train
 
 ```bash
-# train
-python main.py --config configs/name.yaml
+python run.py train --config configs/train.yaml
 ```
 
-### 3. Post-process predictions
+### Evaluate (dev set)
 
 ```bash
-python postprocess.py \
-    --input  work_dir/test.csv \
-    --output submission/test.csv \
-    --train  /path/to/train.csv \
-    --alpha  0.5
+python run.py eval --config configs/test.yaml --split dev
 ```
 
-### 4. Gloss Boundary Extraction
+### Extract Gloss Boundaries
 
-Extract start/end frame for each predicted gloss from CTC logits.
+Extract start/end frame for each predicted gloss from CTC logits:
 
 ```bash
-# single sample
-python extract.py 02_0001
+# single sample (dev split)
+python run.py extract 02_0001
 
 # multiple samples
-python extract.py 02_0001 02_0002 02_0003
+python run.py extract 02_0001 02_0002 02_0003
 
-# first N samples from dataset
-python extract.py --all --limit 10
+# first N samples from dev set
+python run.py extract --split dev --all --limit 10
+
+# train split
+python run.py extract --split train --all --limit 5
 
 # JSON output
-python extract.py 02_0001 --json
+python run.py extract 02_0001 --json
 
 # CSV output
-python extract.py 02_0001 02_0002 --csv
+python run.py extract 02_0001 02_0002 --csv
 ```
 
-**Library usage:**
+### Predict (glosses only)
+
+```bash
+python run.py predict --split dev 02_0001 02_0002 02_0003
+```
+
+### As a Python module
+
+```bash
+python -m temposlr.extract --split dev 02_0001 02_0002
+```
+
+---
+
+## Library Usage
 
 ```python
-from extract import BoundaryExtractor
+from temposlr.extract import BoundaryExtractor
 
-ext = BoundaryExtractor()                          # loads model once
-result = ext("02_0001")                            # → dict with segments
+# Initialize (loads model once)
+ext = BoundaryExtractor(split="dev")
+
+# Extract boundaries for one sample
+result = ext("02_0001")
 # {"sample_id": "02_0001", "t_orig": 32, "feat_len": 11,
 #  "segments": [{"gloss": "سوال", "label_id": 585,
-#                "start": 0, "end": 13,             # original frames
-#                "start_feat": 0, "end_feat": 5}]   # feature frames
-# }
+#                "start": 0, "end": 13,
+#                "start_feat": 0, "end_feat": 5}]}
 
-results = ext.batch(["02_0001", "02_0002"])        # → list of dicts
+# Batch extract
+results = ext.batch(["02_0001", "02_0002"])
 
-# build real gloss names from CSV predictions
-gloss_map = ext.build_gloss_map_from_csv()
-result = ext("02_0001", gloss_map=gloss_map)
+# Get all sample IDs for a split
+all_ids = ext.all_sample_ids()
 ```
 
-**Output columns:**
+### Output Fields
 
 | Field | Description |
 |:---|:---|

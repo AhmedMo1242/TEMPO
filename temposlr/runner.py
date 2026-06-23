@@ -2,12 +2,12 @@ import os
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
-import utils
+from temposlr import utils
 import numpy as np
-import modules
+from temposlr import modules
 import torch
 import torch.nn as nn
-import datasets
+from temposlr import datasets
 import yaml
 import json
 import faulthandler
@@ -15,8 +15,8 @@ from collections import OrderedDict
 
 faulthandler.enable()
 
-from seq_scripts import seq_train, seq_eval
-import slr_network
+from temposlr.loops import seq_train, seq_eval
+from temposlr import model as slr_network
 
 # CUDA Optimizations
 torch.backends.cudnn.benchmark = False
