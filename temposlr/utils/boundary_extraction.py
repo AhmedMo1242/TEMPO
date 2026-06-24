@@ -87,6 +87,49 @@ def _find_detection_frames(
     return frames
 
 
+def _smooth1d(values: torch.Tensor, kernel: int = 3) -> torch.Tensor:
+    """Apply simple moving-average smoothing to a 1-D tensor."""
+    if kernel <= 1 or len(values) <= kernel:
+        return values
+    pad = kernel // 2
+    # Constant-pad (replicate edge values) then 1-D conv
+    v = values.unsqueeze(0).unsqueeze(0)  # (1, 1, T)
+    padded = torch.nn.functional.pad(v, (pad, pad), mode="replicate")
+    kernel_filter = torch.ones(1, 1, kernel, device=values.device) / kernel
+    return torch.nn.functional.conv1d(padded, kernel_filter).squeeze()
+
+
+def _find_transition_frame(
+    probs: torch.Tensor,
+    label_a: int,
+    label_b: int,
+    search_start: int,
+    search_end: int,
+    blank_id: int = 0,
+) -> int:
+    """
+    Find the frame where the model transitions from label_a to label_b.
+
+    Uses the **midpoint** between their detection frames as the split.
+    Detection frames (first argmax appearance) are already robust — they
+    come from the collapsed CTC argmax sequence which is deterministic and
+    noise-free.  Probability-based methods (zero-crossing, peak detection)
+    add fragility without meaningful accuracy gain for well-trained models.
+
+    Args:
+        probs: (T_feat, C) softmax probabilities (unused; kept for API compat)
+        label_a: previous word's label id (unused)
+        label_b: next word's label id (unused)
+        search_start: detection frame of word A
+        search_end: detection frame of word B
+        blank_id: CTC blank index (unused)
+
+    Returns:
+        Frame index of the transition (midpoint between detections).
+    """
+    return (search_start + search_end) // 2
+
+
 def extract_boundaries(
     logits: torch.Tensor,
     feat_len: int,
@@ -98,10 +141,10 @@ def extract_boundaries(
     Extract continuous gloss boundaries from CTC logits.
 
     Uses argmax decoding to find the label sequence, then assigns each
-    gloss a continuous span via midpoint interpolation between detections:
-    - First gloss starts at feature frame 0
+    gloss a continuous span using probability-based transition detection:
+    - First gloss starts at its first detection frame
     - Last gloss ends at feat_len
-    - Consecutive glosses are split at the midpoint of their detection frames
+    - Consecutive glosses are split where their probabilities cross over
 
     Args:
         logits: (T_feat, C) raw cosine-similarity logits from the model
@@ -120,23 +163,35 @@ def extract_boundaries(
 
     detection_frames = _find_detection_frames(token_ids, label_seq, blank_id)
 
-    # Build continuous spans
+    # Build continuous spans with probability-based transitions
     n = len(label_seq)
     segments = []
+
+    # Pre-compute all transition frames between consecutive words
+    transition_frames = []
+    for i in range(n - 1):
+        det_i = detection_frames[i] if i < len(detection_frames) else 0
+        det_next = detection_frames[i + 1] if i + 1 < len(detection_frames) else feat_len
+        trans = _find_transition_frame(
+            probs, label_seq[i], label_seq[i + 1],
+            search_start=det_i,
+            search_end=det_next,
+            blank_id=blank_id,
+        )
+        transition_frames.append(trans)
+
     for i, lid in enumerate(label_seq):
         det = detection_frames[i] if i < len(detection_frames) else 0
 
         if i == 0:
-            start = 0
+            start = det  # Start at first detection frame
         else:
-            prev_det = detection_frames[i - 1] if i - 1 < len(detection_frames) else 0
-            start = (prev_det + det) // 2
+            start = transition_frames[i - 1]  # Use probability-based transition
 
         if i == n - 1:
             end = feat_len
         else:
-            next_det = detection_frames[i + 1] if i + 1 < len(detection_frames) else feat_len
-            end = (det + next_det) // 2
+            end = transition_frames[i]  # Use probability-based transition
 
         if end <= start:
             end = start + 1
