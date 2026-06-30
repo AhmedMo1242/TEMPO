@@ -146,4 +146,48 @@ Config lives at `configs/test.yaml`. Edit `load_checkpoints` to point to your ch
 
 ---
 
+## Video Pipeline & Segmentation
+
+### Annotate a video (text overlays on slowed-down video)
+
+```bash
+python -m temposlr.pipeline 00_1625 --split train
+```
+
+Output: `output/00_1625_annotated.mp4`
+
+### Segment a video into per-sign clips
+
+```bash
+python -m temposlr.segment 00_1625 --split train
+```
+
+Output: `output/segments/00_1625_001_مطار.mp4`, `00_1625_002_د.mp4`, ... + `_segments.json`
+
+Options:
+- `--slow 3` — slow down clips 3× for review
+- `--output-dir ./my_segments` — custom output directory
+- `--no-json` — skip metadata JSON
+
+### As a Python library
+
+```python
+from temposlr.extract import BoundaryExtractor
+from temposlr.segment import segment_video
+
+# Load model once
+ext = BoundaryExtractor(config="configs/test.yaml", split="train")
+
+# Segment a video
+result = segment_video(
+    sample_id="00_1625",
+    extractor=ext,
+    video_path="/kaggle/working/00_1625.mp4",
+    output_dir="./segments",
+)
+# result["clips"] → list of {gloss, video_time_start, video_time_end, clip_file}
+```
+
+---
+
 *Work done by **Ahmed Hassan** (ahmed.hasan@ejust.edu.eg) and **Nadine Alsayad** (nadine.alsayad@ejust.edu.eg)*
